@@ -10,6 +10,10 @@ export class BrowserInstance extends EventEmitter {
   private aiEngine: AIEngine;
   private chatSimulationInterval: NodeJS.Timeout | null = null;
 
+  // 网络嗅探状态
+  private interceptedStreamConfig: { server: string, key: string } | null = null;
+  private sniffResolve: ((value: any) => void) | null = null;
+
   constructor(headless: boolean = false) {
     super();
     this.isHeadless = headless;
@@ -31,9 +35,143 @@ export class BrowserInstance extends EventEmitter {
 
   async start(): Promise<void> {
     console.log(`[Browser] Starting (headless: ${this.isHeadless})`);
-    this.browser = await chromium.launch({ headless: this.isHeadless });
-    this.context = await this.browser.newContext();
+    this.browser = await chromium.launch({
+        headless: this.isHeadless,
+        args: [
+            '--disable-blink-features=AutomationControlled', // 核心屏蔽自动化特征
+            '--disable-infobars',
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--ignore-certificate-errors',
+        ]
+    });
+
+    // 配置类似真人的 Context，并注入自定义 User-Agent
+    this.context = await this.browser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        viewport: { width: 1920, height: 1080 },
+        deviceScaleFactor: 1,
+        hasTouch: false,
+        isMobile: false,
+        locale: 'zh-CN',
+        timezoneId: 'Asia/Shanghai'
+    });
+
+    // 深度注入反风控脚本 (Stealth) 到每一个新建的 Page
+    await this.context.addInitScript(() => {
+        // 1. 抹除 navigator.webdriver (绝大多数检测的基础)
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined,
+        });
+
+        // 2. 伪造 window.chrome 对象
+        (window as any).chrome = {
+            runtime: {},
+            loadTimes: function() {},
+            csi: function() {},
+            app: {}
+        };
+
+        // 3. 抹除 Playwright 特有的全局变量特征 (如果不慎泄露)
+        delete (window as any).__playwright;
+        delete (window as any).__pw_manual;
+        delete (window as any).__PW_outOfContext;
+
+        // 4. 修改 Permissions API 的默认行为 (Headless 默认是 denied, 真人通常是 prompt)
+        const originalQuery = window.navigator.permissions.query;
+        (window.navigator.permissions as any).query = (parameters: any) => {
+            if (parameters.name === 'notifications') {
+                return Promise.resolve({ state: Notification.permission } as PermissionStatus);
+            }
+            return originalQuery(parameters);
+        };
+
+        // 5. 伪装 WebGL 渲染器指纹 (绕过高级硬件指纹检测)
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(parameter) {
+            // UNMASKED_VENDOR_WEBGL
+            if (parameter === 37445) {
+                return 'Intel Inc.';
+            }
+            // UNMASKED_RENDERER_WEBGL
+            if (parameter === 37446) {
+                return 'Intel Iris OpenGL Engine';
+            }
+            return getParameter.apply(this, [parameter]);
+        };
+    });
+
     this.page = await this.context.newPage();
+    this.setupNetworkSniffer();
+  }
+
+  private setupNetworkSniffer() {
+    if (!this.page) return;
+
+    this.page.on('response', async (response) => {
+        try {
+            const url = response.url();
+            // 忽略非 API 请求，加快处理速度
+            if (!url.includes('/api/') && !url.includes('stream') && !url.includes('live')) return;
+
+            const resourceType = response.request().resourceType();
+            if (resourceType === 'fetch' || resourceType === 'xhr') {
+                const contentType = response.headers()['content-type'] || '';
+                if (contentType.includes('application/json')) {
+                    const text = await response.text();
+
+                    // 智能嗅探：不管具体平台，使用正则寻找推流协议特征
+                    // 特征 1: rtmp://... 形式的 URL
+                    // 特征 2: stream_url, push_url 等常见的 JSON 键
+                    if (text.includes('rtmp://') || text.includes('stream_url')) {
+                        console.log(`[NetworkSniffer] Suspicious JSON detected in ${url}`);
+                        const parsed = JSON.parse(text);
+                        this.extractStreamConfig(parsed);
+                    }
+                }
+            }
+        } catch (e) {
+            // 忽略读取 response.text() 失败的错（如被 abort）
+        }
+    });
+  }
+
+  private extractStreamConfig(data: any) {
+      if (this.interceptedStreamConfig) return; // 已经抓到了就跳过
+
+      // 递归搜索 JSON 树，寻找类似 rtmp 链接的字段
+      const searchJSON = (obj: any): string | null => {
+          if (!obj) return null;
+          if (typeof obj === 'string') {
+              if (obj.startsWith('rtmp://')) return obj;
+              return null;
+          }
+          if (typeof obj === 'object') {
+              for (const key in obj) {
+                  const result = searchJSON(obj[key]);
+                  if (result) return result;
+              }
+          }
+          return null;
+      };
+
+      const fullUrl = searchJSON(data);
+      if (fullUrl) {
+          console.log(`[NetworkSniffer] 🎉 Successfully extracted RTMP URL: ${fullUrl}`);
+
+          // 简单的切割逻辑：以最后一个 '/' 为界，前面是 server，后面是 key
+          // 实际平台可能需要更复杂的正则，比如 rtmp://domain/app/stream_name?token=...
+          const lastSlashIndex = fullUrl.lastIndexOf('/');
+          const server = fullUrl.substring(0, lastSlashIndex + 1);
+          const key = fullUrl.substring(lastSlashIndex + 1);
+
+          this.interceptedStreamConfig = { server, key };
+
+          if (this.sniffResolve) {
+              this.sniffResolve(this.interceptedStreamConfig);
+              this.sniffResolve = null;
+          }
+      }
   }
 
   async loginDouyin(): Promise<boolean> {
@@ -91,12 +229,29 @@ export class BrowserInstance extends EventEmitter {
   }
 
   async getStreamCode(): Promise<any> {
-    console.log(`[Browser] Getting stream code...`);
-    // 模拟获取推流码并分析文件
-    return {
-      server: 'rtmp://live-push.example.com/live/',
-      key: 'test_stream_key_12345',
-    };
+    console.log(`[Browser] Waiting for stream code via network sniffing...`);
+
+    // 如果已经抓到了，直接返回
+    if (this.interceptedStreamConfig) {
+        return this.interceptedStreamConfig;
+    }
+
+    // 否则挂起 Promise 等待抓包回调
+    return new Promise((resolve, reject) => {
+        this.sniffResolve = resolve;
+
+        // 设置一个超时机制，防止一直等不到
+        setTimeout(() => {
+            if (this.sniffResolve) {
+                console.warn(`[NetworkSniffer] Timeout waiting for stream code. Returning fallback test code.`);
+                this.sniffResolve = null;
+                resolve({
+                    server: 'rtmp://live-push.example.com/live/',
+                    key: 'timeout_fallback_key',
+                });
+            }
+        }, 30000); // 30 秒超时
+    });
   }
 
   async switchToHeadlessMode(): Promise<void> {
