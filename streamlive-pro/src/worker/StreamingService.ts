@@ -1,24 +1,42 @@
 import { ChildProcess, spawn } from 'child_process';
+import { EventEmitter } from 'events';
 import { IStreamConfig } from '../shared/types';
 
-export class StreamingService {
+export class StreamingService extends EventEmitter {
   private ffmpegProcess: ChildProcess | null = null;
   private isStreaming: boolean = false;
+  private currentConfig: IStreamConfig | null = null;
+  private currentStreamType: string = '';
 
-  constructor() {}
+  // 重连机制状态
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
+  private reconnectTimeout: NodeJS.Timeout | null = null;
+  private isManuallyStopped: boolean = false;
+
+  constructor() {
+    super();
+  }
 
   async start(streamCode: IStreamConfig | null, streamType: string): Promise<void> {
     if (this.isStreaming) return;
 
+    this.isManuallyStopped = false;
+    this.currentConfig = streamCode;
+    this.currentStreamType = streamType;
+    this.reconnectAttempts = 0;
+
     console.log(`[StreamingService] Starting stream (Type: ${streamType})...`);
 
-    if (streamType === 'ffmpeg' || streamType === 'rtmp') {
-      await this.startFFmpegProcess(streamCode);
-    } else if (streamType === 'webrtc') {
-       // WebRTC 推流逻辑 (通常通过浏览器端进行)
+    await this.executeStreamStrategy();
+  }
+
+  private async executeStreamStrategy(): Promise<void> {
+    if (this.currentStreamType === 'ffmpeg' || this.currentStreamType === 'rtmp') {
+      await this.startFFmpegProcess(this.currentConfig);
+    } else if (this.currentStreamType === 'webrtc') {
        console.log('[StreamingService] WebRTC selected. Using Browser context to push.');
     }
-
     this.isStreaming = true;
   }
 
@@ -38,20 +56,31 @@ export class StreamingService {
 
       const rtmpUrl = config.server.endsWith('/') ? `${config.server}${config.key}` : `${config.server}/${config.key}`;
 
-      // 真实的 FFmpeg 参数构建
+      // 动态防搬运水印滤镜 (drawtext)
+      const watermarkText = `Live-${Date.now()}`;
+      const vfFilters = `drawtext=text='${watermarkText}':x=W-tw-10:y=10:fontsize=24:fontcolor=white@0.8:box=1:boxcolor=black@0.5`;
+
+      // 真实的 FFmpeg 参数构建 (加入了滤镜和重连参数)
       const args = [
-          '-re', // Read input at native frame rate (important for live streaming)
-          '-i', inputPath, // 真实用户选择的文件
-          '-c:v', 'libx264', // H.264 video codec
-          '-preset', 'veryfast', // Encoding speed/compression tradeoff
-          '-maxrate', '3000k', // Max video bitrate (example)
+          '-re',
+          '-i', inputPath,
+          '-vf', vfFilters,
+          '-c:v', 'libx264',
+          '-preset', 'veryfast',
+          '-maxrate', '3000k',
           '-bufsize', '6000k',
           '-pix_fmt', 'yuv420p',
-          '-g', '50', // GOP size (keyframe interval)
-          '-c:a', 'aac', // AAC audio codec
-          '-b:a', '128k', // Audio bitrate
-          '-ar', '44100', // Audio sample rate
-          '-f', 'flv', // Output format must be FLV for RTMP
+          '-g', '50',
+          '-c:a', 'aac',
+          '-b:a', '128k',
+          '-ar', '44100',
+
+          // RTMP 推流级重连参数
+          '-drop_pkts_on_overflow', '1',
+          '-attempt_recovery', '1',
+          '-max_recovery_attempts', '5',
+
+          '-f', 'flv',
           rtmpUrl
       ];
 
@@ -87,8 +116,33 @@ export class StreamingService {
 
       this.ffmpegProcess.on('close', (code) => {
           console.log(`[StreamingService] FFmpeg exited with code ${code}`);
+          this.ffmpegProcess = null;
           this.isStreaming = false;
+
+          if (!this.isManuallyStopped) {
+              this.handleDisconnect();
+          }
       });
+  }
+
+  private handleDisconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        console.error(`[StreamingService] Max reconnect attempts reached. Stream failed permanently.`);
+        this.emit('status-changed', 'error');
+        return;
+    }
+
+    this.reconnectAttempts++;
+    // 指数退避: 2s, 4s, 8s, 16s...
+    const delay = Math.min(2000 * Math.pow(2, this.reconnectAttempts - 1), 30000);
+
+    console.warn(`[StreamingService] Connection lost. Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts}) in ${delay}ms...`);
+    this.emit('status-changed', 'reconnecting');
+
+    this.reconnectTimeout = setTimeout(() => {
+        console.log(`[StreamingService] Executing reconnect...`);
+        this.executeStreamStrategy().catch(e => console.error('Reconnect failed', e));
+    }, delay);
   }
 
   async switchResource(newResourceId: string): Promise<void> {
@@ -102,10 +156,23 @@ export class StreamingService {
   }
 
   async stop(): Promise<void> {
-      console.log(`[StreamingService] Stopping stream...`);
+      console.log(`[StreamingService] Stopping stream manually...`);
+      this.isManuallyStopped = true;
+
+      if (this.reconnectTimeout) {
+          clearTimeout(this.reconnectTimeout);
+          this.reconnectTimeout = null;
+      }
+
       if (this.ffmpegProcess) {
-          this.ffmpegProcess.kill('SIGKILL');
-          this.ffmpegProcess = null;
+          // Graceful exit first, then force
+          this.ffmpegProcess.kill('SIGTERM');
+          setTimeout(() => {
+              if (this.ffmpegProcess && !this.ffmpegProcess.killed) {
+                  this.ffmpegProcess.kill('SIGKILL');
+              }
+              this.ffmpegProcess = null;
+          }, 1000);
       }
       this.isStreaming = false;
   }

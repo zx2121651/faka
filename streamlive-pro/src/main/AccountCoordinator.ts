@@ -102,10 +102,14 @@ export class AccountCoordinator extends EventEmitter {
   private handleIpcMessage(accountId: string, message: any) {
     console.log(`[Main] Received from Worker [${accountId}]:`, message);
     if (message.type === 'STATUS_UPDATE') {
-      const account = this.accounts.get(accountId);
-      if (account) {
-        account.status = message.payload.status;
-        this.emitStatusChange(accountId, account.status);
+      if (message.payload.status === 'ai-log') {
+        this.emit('ai-log', accountId, message.payload.log);
+      } else {
+        const account = this.accounts.get(accountId);
+        if (account) {
+          account.status = message.payload.status;
+          this.emitStatusChange(accountId, account.status);
+        }
       }
     }
   }

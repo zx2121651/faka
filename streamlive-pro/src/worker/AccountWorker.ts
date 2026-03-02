@@ -54,6 +54,16 @@ class AccountWorker {
       // 5. 启动推流服务
       await this.streamingService.start(this.streamConfig || streamCode, this.streamType);
 
+    // 监听推流状态变化
+    this.streamingService.on('status-changed', (status: string) => {
+        this.sendStateUpdate(status);
+    });
+
+    // 监听 AI 日志
+    this.browserInstance.on('ai-log', (log: any) => {
+        this.sendStateUpdate('ai-log', { log });
+    });
+
       // 6. 启动直播场控 (弹幕/点赞监控)
       this.liveController.start();
 

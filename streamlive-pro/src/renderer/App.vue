@@ -56,7 +56,7 @@
             <h4>{{ acc.name }}</h4>
             <span class="status-dot" :class="`status-${acc.status}`"></span>
             <span style="font-size: 12px; color: var(--text-muted)">
-              {{ acc.status === 'streaming' ? '推流中' : (acc.status === 'starting' ? '启动中' : '离线') }}
+              {{ acc.status === 'streaming' ? '推流中' : (acc.status === 'reconnecting' ? '断线重连中' : (acc.status === 'starting' ? '启动中' : '离线')) }}
             </span>
           </div>
         </div>
@@ -76,8 +76,8 @@
           <div class="info-grid">
             <div class="info-box">
               <div class="info-label">推流状态</div>
-              <div class="info-value" :class="{ streaming: currentAccount.status === 'streaming' }">
-                {{ currentAccount.status === 'streaming' ? '直播中' : (currentAccount.status === 'starting' ? '准备中' : '未开播') }}
+              <div class="info-value" :class="{ streaming: currentAccount.status === 'streaming', reconnecting: currentAccount.status === 'reconnecting' }">
+                {{ currentAccount.status === 'streaming' ? '直播中' : (currentAccount.status === 'reconnecting' ? '正在重连...' : (currentAccount.status === 'starting' ? '准备中' : '未开播')) }}
               </div>
             </div>
             <div class="info-box">
@@ -104,6 +104,34 @@
           <div class="input-group">
             <label>串流密钥</label>
             <input type="password" v-model="streamKey" placeholder="输入密钥">
+          </div>
+        </div>
+
+        <!-- AI Chat Log Card -->
+        <div class="card" v-if="currentAccount.status === 'streaming' || currentAccount.status === 'reconnecting'">
+          <div class="card-header">
+            <h3>🤖 实时弹幕与 AI 互动日志</h3>
+          </div>
+          <div class="chat-log-container" ref="chatLogContainer">
+             <div v-if="accountAiLogs[currentAccount.id]?.length === 0" style="text-align: center; color: var(--text-muted); padding: 20px;">
+                等待弹幕接入...
+             </div>
+             <div
+                v-for="(log, index) in accountAiLogs[currentAccount.id]"
+                :key="index"
+                class="chat-log-item"
+             >
+                <div v-if="log.type === 'user'" class="log-user">
+                  <span class="time">{{ formatTime(log.timestamp) }}</span>
+                  <span class="username">[{{ log.username }}]:</span>
+                  <span class="text">{{ log.text }}</span>
+                </div>
+                <div v-else class="log-ai">
+                  <span class="time">{{ formatTime(log.timestamp) }}</span>
+                  <span class="username" style="color: var(--primary)">[🌟 {{ log.username }}]:</span>
+                  <span class="text">{{ log.text }}</span>
+                </div>
+             </div>
           </div>
         </div>
 
@@ -202,7 +230,7 @@ const { ipcRenderer } = window.require('electron');
 interface IAccountInfo {
   id: string;
   name: string;
-  status: 'offline' | 'starting' | 'streaming' | 'error';
+  status: 'offline' | 'starting' | 'streaming' | 'reconnecting' | 'error';
   duration: number;
   streamType: string;
 }
@@ -227,8 +255,12 @@ const systemStats = ref<any>({
 
 // 计算属性
 const streamingAccountsCount = computed(() => {
-  return accounts.value.filter(a => a.status === 'streaming').length;
+  return accounts.value.filter(a => a.status === 'streaming' || a.status === 'reconnecting').length;
 });
+
+// AI 互动日志状态
+const accountAiLogs = ref<Record<string, any[]>>({});
+const chatLogContainer = ref<HTMLElement | null>(null);
 
 // 定时关播
 const timerHours = ref(0);
@@ -250,6 +282,11 @@ const fetchAccounts = async () => {
 const selectAccount = (acc: IAccountInfo) => {
   currentAccount.value = acc;
   selectedStreamType.value = acc.streamType || 'rtmp';
+
+  // 初始化该账号的日志数组
+  if (!accountAiLogs.value[acc.id]) {
+      accountAiLogs.value[acc.id] = [];
+  }
 };
 
 const selectMediaFile = async () => {
@@ -341,6 +378,28 @@ onMounted(() => {
       }
   });
 
+  // Listen for AI Logs
+  ipcRenderer.on('ai-log', (event: any, { accountId, log }: any) => {
+      if (!accountAiLogs.value[accountId]) {
+          accountAiLogs.value[accountId] = [];
+      }
+      accountAiLogs.value[accountId].push(log);
+
+      // 保持日志数量在合理范围
+      if (accountAiLogs.value[accountId].length > 100) {
+          accountAiLogs.value[accountId].shift();
+      }
+
+      // 自动滚动到底部
+      if (currentAccount.value?.id === accountId) {
+          setTimeout(() => {
+              if (chatLogContainer.value) {
+                  chatLogContainer.value.scrollTop = chatLogContainer.value.scrollHeight;
+              }
+          }, 50);
+      }
+  });
+
   // Listen for real-time system stats update
   ipcRenderer.on('system-stats-update', (event: any, stats: any) => {
       systemStats.value = stats;
@@ -349,6 +408,7 @@ onMounted(() => {
 
 onUnmounted(() => {
     ipcRenderer.removeAllListeners('account-status-changed');
+    ipcRenderer.removeAllListeners('ai-log');
     ipcRenderer.removeAllListeners('system-stats-update');
     clearTimer();
 });
@@ -395,4 +455,46 @@ const formatBytes = (bytes: number, decimals = 1) => {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 };
+
+const formatTime = (ts: number) => {
+    const d = new Date(ts);
+    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`;
+};
 </script>
+
+<style scoped>
+.chat-log-container {
+    height: 200px;
+    overflow-y: auto;
+    background: #1e1e1e;
+    border-radius: 8px;
+    padding: 15px;
+    font-size: 13px;
+    font-family: Consolas, monospace;
+}
+.chat-log-item {
+    margin-bottom: 8px;
+    line-height: 1.4;
+}
+.log-user .time, .log-ai .time {
+    color: #666;
+    margin-right: 8px;
+}
+.log-user .username {
+    color: #a0c4ff;
+    font-weight: bold;
+    margin-right: 5px;
+}
+.log-user .text {
+    color: #fff;
+}
+.log-ai .username {
+    font-weight: bold;
+    margin-right: 5px;
+}
+.log-ai .text {
+    color: #4ade80;
+}
+.reconnecting { color: #fca311 !important; }
+.status-reconnecting { background-color: #fca311; }
+</style>

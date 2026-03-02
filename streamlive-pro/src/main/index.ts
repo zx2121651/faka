@@ -112,7 +112,13 @@ ipcMain.handle('select-file', async () => {
 
 // Route updates from coordinator to the renderer
 coordinator.on('account-status-changed', (accountId, status) => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('account-status-changed', { accountId, status });
+    }
+});
+
+coordinator.on('ai-log', (accountId, log) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ai-log', { accountId, log });
     }
 });
