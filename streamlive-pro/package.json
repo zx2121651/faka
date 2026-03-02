@@ -2,7 +2,7 @@
   "name": "streamlive-pro",
   "version": "1.0.0",
   "description": "Multi-account stream live automation",
-  "main": "dist/main/index.js",
+  "main": "dist/main/main/index.js",
   "scripts": {
     "dev:vite": "vite",
     "dev:main": "wait-on http://localhost:5173 && tsc -p tsconfig.main.json && tsc -p tsconfig.worker.json && electron .",
@@ -22,9 +22,10 @@
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@vitejs/plugin-vue": "^5.2.1",
     "concurrently": "^9.1.2",
-    "electron": "^34.2.0",
+    "electron": "^34.5.8",
     "electron-builder": "^25.1.8",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.3",

@@ -2,10 +2,12 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path from 'path';
 import { AccountCoordinator } from './AccountCoordinator';
 import { ResourceManager } from './ResourceManager';
+import { SystemMonitor } from './SystemMonitor';
 
 let mainWindow: BrowserWindow | null = null;
 const coordinator = new AccountCoordinator();
 const resourceManager = new ResourceManager();
+const systemMonitor = new SystemMonitor();
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -18,19 +20,31 @@ function createWindow() {
     title: 'StreamLive Pro',
   });
 
-  const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+  const isDev = process.env.NODE_ENV === 'development';
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+    mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'));
   }
+
+  const statsListener = (stats: any) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('system-stats-update', stats);
+    }
+  };
+
+  systemMonitor.on('stats-updated', statsListener);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
     coordinator.stopAllAccounts();
+    systemMonitor.stop();
+    systemMonitor.removeListener('stats-updated', statsListener);
   });
+
+  systemMonitor.start();
 }
 
 app.whenReady().then(() => {

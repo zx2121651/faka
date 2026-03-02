@@ -1,7 +1,42 @@
 <template>
   <div class="app-container">
-    <!-- Sidebar -->
-    <div class="sidebar">
+    <!-- Top Header / Status Bar -->
+    <header class="app-header">
+      <div class="logo">
+        <span class="icon">🚀</span>
+        StreamLive Pro
+      </div>
+      <div class="system-stats">
+        <div class="stat-item">
+          <span class="label">在线账号</span>
+          <span class="value">{{ accounts.length }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">推流中</span>
+          <span class="value streaming-text">{{ streamingAccountsCount }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">CPU</span>
+          <span class="value" :class="{'warning-text': systemStats.cpu > 80}">{{ systemStats.cpu }}%</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">内存占用</span>
+          <span class="value" :class="{'warning-text': systemStats.memory > 80}">{{ systemStats.memory }}%</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">稳定性</span>
+          <span class="value" :class="{'success-text': systemStats.stability >= 95, 'warning-text': systemStats.stability < 95}">{{ systemStats.stability }}%</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">网络 (上/下)</span>
+          <span class="value">{{ formatBytes(systemStats.network?.tx || 0) }}/s / {{ formatBytes(systemStats.network?.rx || 0) }}/s</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="main-layout">
+      <!-- Sidebar -->
+      <div class="sidebar">
       <div class="sidebar-header">
         <h3>账号列表</h3>
         <button class="btn btn-primary" style="padding: 5px 10px;">+</button>
@@ -151,15 +186,16 @@
 
         </div>
       </div>
-    </div>
-    <div v-else class="main-content" style="display: flex; justify-content: center; align-items: center;">
-       <h2 style="color: var(--text-muted)">请在左侧选择一个账号</h2>
+      </div>
+      <div v-else class="main-content" style="display: flex; justify-content: center; align-items: center;">
+         <h2 style="color: var(--text-muted)">请在左侧选择一个账号</h2>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 
 const { ipcRenderer } = window.require('electron');
 
@@ -180,6 +216,19 @@ const timerEnabled = ref(true);
 const selectedFilePath = ref('');
 const rtmpServer = ref('rtmp://localhost/live/'); // 默认测试地址
 const streamKey = ref('test'); // 默认测试密钥
+
+// 系统监控状态
+const systemStats = ref<any>({
+  cpu: 0,
+  memory: 0,
+  stability: 100,
+  network: { tx: 0, rx: 0 }
+});
+
+// 计算属性
+const streamingAccountsCount = computed(() => {
+  return accounts.value.filter(a => a.status === 'streaming').length;
+});
 
 // 定时关播
 const timerHours = ref(0);
@@ -291,10 +340,16 @@ onMounted(() => {
           }
       }
   });
+
+  // Listen for real-time system stats update
+  ipcRenderer.on('system-stats-update', (event: any, stats: any) => {
+      systemStats.value = stats;
+  });
 });
 
 onUnmounted(() => {
     ipcRenderer.removeAllListeners('account-status-changed');
+    ipcRenderer.removeAllListeners('system-stats-update');
     clearTimer();
 });
 
@@ -330,5 +385,14 @@ const formatRemainingTime = (totalSeconds: number) => {
     const m = Math.floor((totalSeconds % 3600) / 60);
     const s = totalSeconds % 60;
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+};
+
+const formatBytes = (bytes: number, decimals = 1) => {
+    if (!+bytes) return '0 B';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 };
 </script>

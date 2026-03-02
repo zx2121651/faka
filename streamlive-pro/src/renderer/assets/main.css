@@ -25,7 +25,63 @@ body {
 
 .app-container {
   display: flex;
+  flex-direction: column;
   height: 100vh;
+  overflow: hidden;
+}
+
+.app-header {
+  height: 50px;
+  background-color: #2b2d42;
+  color: white;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 20px;
+  flex-shrink: 0;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  z-index: 10;
+}
+
+.logo {
+  font-weight: bold;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.system-stats {
+  display: flex;
+  gap: 20px;
+  font-size: 13px;
+}
+
+.stat-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background-color: rgba(255,255,255,0.1);
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+
+.stat-item .label {
+  color: #8d99ae;
+}
+
+.stat-item .value {
+  font-weight: 600;
+  font-family: monospace;
+}
+
+.streaming-text { color: #ef233c; }
+.warning-text { color: #fca311; }
+.success-text { color: #38b000; }
+
+.main-layout {
+  display: flex;
+  flex: 1;
   overflow: hidden;
 }
 

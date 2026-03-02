@@ -8,3 +8,5 @@
   ➜  Local:   http://localhost:5173/
   ➜  Network: use --host to expose
 12:09:59 PM [vite] (client) hmr update /App.vue
+12:34:22 PM [vite] (client) hmr update /App.vue
+12:36:42 PM [vite] (client) hmr update /assets/main.css
