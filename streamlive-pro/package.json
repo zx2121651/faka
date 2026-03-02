@@ -1,0 +1,34 @@
+{
+  "name": "streamlive-pro",
+  "version": "1.0.0",
+  "description": "Multi-account stream live automation",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev:vite": "vite",
+    "dev:main": "wait-on http://localhost:5173 && tsc -p tsconfig.main.json && tsc -p tsconfig.worker.json && electron .",
+    "dev": "concurrently -k \"npm run dev:vite\" \"npm run dev:main\"",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:worker": "tsc -p tsconfig.worker.json",
+    "build:vite": "vite build",
+    "build": "npm run build:vite && npm run build:main && npm run build:worker",
+    "package": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0",
+    "lucide-vue-next": "^0.475.0",
+    "pinia": "^2.3.1",
+    "playwright": "^1.50.1",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "concurrently": "^9.1.2",
+    "electron": "^34.2.0",
+    "electron-builder": "^25.1.8",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.1",
+    "wait-on": "^8.0.2"
+  }
+}
