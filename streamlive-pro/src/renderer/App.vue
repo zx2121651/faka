@@ -135,6 +135,40 @@
           </div>
         </div>
 
+        <!-- AI Settings Card -->
+        <div class="card" v-if="currentAccount.status === 'offline'">
+          <div class="card-header">
+            <h3>🤖 智能场控配置</h3>
+            <label class="toggle-switch">
+              <input type="checkbox" v-model="aiSettings.enabled">
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div v-if="aiSettings.enabled">
+            <div class="input-group">
+              <label>大语言模型 (API Provider)</label>
+              <select v-model="aiSettings.provider" style="width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background-color: #f8f9fa;">
+                <option value="deepseek">DeepSeek (性价比首选)</option>
+                <option value="openai">OpenAI (ChatGPT)</option>
+              </select>
+            </div>
+            <div class="input-group">
+              <label>API Key</label>
+              <input type="password" v-model="aiSettings.apiKey" placeholder="输入您的 API Key, 例如 sk-...">
+            </div>
+            <div class="input-group">
+              <label>系统提示词 (System Prompt)</label>
+              <textarea
+                v-model="aiSettings.systemPrompt"
+                rows="3"
+                style="width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background-color: #f8f9fa; resize: vertical; font-family: inherit;"
+                placeholder="例如: 你是一个活泼的带货主播助手。当有人问价格时，告诉他们点击左下角小黄车。语言要简短幽默。"
+              ></textarea>
+            </div>
+          </div>
+        </div>
+
         <!-- Stream Scheme Card -->
         <div class="card">
           <div class="card-header">
@@ -245,6 +279,14 @@ const selectedFilePath = ref('');
 const rtmpServer = ref('rtmp://localhost/live/'); // 默认测试地址
 const streamKey = ref('test'); // 默认测试密钥
 
+// 智能场控配置
+const aiSettings = ref({
+  enabled: true,
+  provider: 'deepseek',
+  apiKey: '',
+  systemPrompt: '你是一个热情活泼的带货主播助手。当观众问价格或购买方式时，引导他们点击左下角小黄车下单；当观众打招呼时，热情欢迎他们。回复要求简短直接，像真人说话。'
+});
+
 // 系统监控状态
 const systemStats = ref<any>({
   cpu: 0,
@@ -308,10 +350,16 @@ const startStream = async () => {
       return;
   }
 
+  if (aiSettings.value.enabled && !aiSettings.value.apiKey) {
+      alert('请填写智能场控大模型的 API Key，或者关闭智能场控！');
+      return;
+  }
+
   const streamConfig = {
       server: rtmpServer.value,
       key: streamKey.value,
-      filePath: selectedFilePath.value
+      filePath: selectedFilePath.value,
+      aiSettings: { ...aiSettings.value }
   };
 
   const res = await ipcRenderer.invoke('start-account', currentAccount.value.id, selectedStreamType.value, streamConfig);

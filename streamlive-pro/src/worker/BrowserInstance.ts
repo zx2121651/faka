@@ -1,6 +1,7 @@
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import { EventEmitter } from 'events';
 import { AIEngine } from './AIEngine';
+import { IAISettings } from '../shared/types';
 
 export class BrowserInstance extends EventEmitter {
   private browser: Browser | null = null;
@@ -14,10 +15,10 @@ export class BrowserInstance extends EventEmitter {
   private interceptedStreamConfig: { server: string, key: string } | null = null;
   private sniffResolve: ((value: any) => void) | null = null;
 
-  constructor(headless: boolean = false) {
+  constructor(headless: boolean = false, aiSettings?: IAISettings) {
     super();
     this.isHeadless = headless;
-    this.aiEngine = new AIEngine();
+    this.aiEngine = new AIEngine(aiSettings);
     this.setupAIEngine();
   }
 
@@ -178,45 +179,88 @@ export class BrowserInstance extends EventEmitter {
     console.log(`[Browser] Simulating Douyin login...`);
     if (!this.page) return false;
 
+    // 绑定 Node.js 回调，供网页内部 MutationObserver 触发
+    await this.page.exposeFunction('onNewChatMessage', (username: string, text: string) => {
+        console.log(`[DOMWatcher] Real chat received: [${username}] ${text}`);
+        this.aiEngine.processChat(username, text);
+    });
+
     // 模拟访问和登录流程 (实际需替换为真实逻辑，可能使用保存的 Cookie)
     await this.page.goto('https://creator.douyin.com/');
     await this.page.waitForTimeout(2000); // 假装等待加载
 
-    // 启动模拟弹幕抓取
-    this.startChatSimulation();
+    // 注入真实 DOM 监听器
+    await this.injectDouyinDomWatcher();
 
     return true;
   }
 
-  private startChatSimulation() {
-    // 模拟监听网页 WebSocket 接收到的真实弹幕
-    const sampleChats = [
-        { user: '大哥666', msg: '主播好，这个怎么卖？' },
-        { user: '神秘人', msg: '测试一下弹幕' },
-        { user: '榜一大哥', msg: '多少钱能带走？' },
-        { user: '小迷妹', msg: '晚上好呀！' }
-    ];
+  private async injectDouyinDomWatcher() {
+    if (!this.page) return;
 
-    this.chatSimulationInterval = setInterval(() => {
-        const randomChat = sampleChats[Math.floor(Math.random() * sampleChats.length)];
-        this.aiEngine.processChat(randomChat.user, randomChat.msg);
-    }, 15000); // 每 15 秒模拟收到一条弹幕
+    console.log(`[BrowserInstance] Injecting Douyin Live DOM Watcher...`);
+    await this.page.evaluate(() => {
+        // 抖音网页版直播间弹幕容器 (示例 Selector，需根据抖音最新改版调整)
+        const chatContainerSelector = '.webcast-chatroom___items';
+        const chatContainer = document.querySelector(chatContainerSelector);
+
+        if (!chatContainer) {
+            console.warn('[DOMWatcher] Chat container not found, watcher paused.');
+            return;
+        }
+
+        const observer = new MutationObserver((mutations) => {
+            for (let mutation of mutations) {
+                if (mutation.addedNodes.length > 0) {
+                    mutation.addedNodes.forEach((node: any) => {
+                        // 寻找弹幕节点并提取文本
+                        if (node.querySelector) {
+                            const nameNode = node.querySelector('.webcast-chatroom___name');
+                            const contentNode = node.querySelector('.webcast-chatroom___content');
+
+                            if (nameNode && contentNode) {
+                                const username = nameNode.innerText.trim();
+                                const text = contentNode.innerText.trim();
+
+                                // 调用暴露给上下文的 Node.js 函数
+                                (window as any).onNewChatMessage(username, text);
+                            }
+                        }
+                    });
+                }
+            }
+        });
+
+        observer.observe(chatContainer, { childList: true, subtree: true });
+        console.log('[DOMWatcher] Successfully hooked to Douyin live chat DOM.');
+    });
   }
 
   private async sendChatToLiveStream(text: string) {
     if (!this.page) return;
 
     try {
-        // 在实际应用中，你需要替换成直播间真实的输入框 Selector
-        // const inputSelector = 'textarea.chat-input';
-        // const sendBtnSelector = 'button.send-btn';
+        console.log(`[BrowserInstance] Executing automated typing...`);
+        // 抖音网页版直播间输入框 Selector (示例)
+        const inputSelector = '.webcast-chatroom___input';
+        const sendBtnSelector = '.webcast-chatroom___send-btn';
 
-        // await this.page.locator(inputSelector).fill(text);
-        // await this.page.waitForTimeout(500); // 模拟人类打字停顿
-        // await this.page.locator(sendBtnSelector).click();
+        // 检查输入框是否存在
+        const inputLocator = this.page.locator(inputSelector);
+        if (await inputLocator.count() > 0) {
+            // 点击激活输入框
+            await inputLocator.click();
+            // 模拟真人打字机效果 (每个字符间隔 50-150ms)
+            await inputLocator.pressSequentially(text, { delay: Math.floor(Math.random() * 100) + 50 });
 
-        // 这里仅作控制台演示
-        console.log(`[BrowserInstance] Playwright simulated typing text into DOM...`);
+            await this.page.waitForTimeout(300); // 停顿一下
+
+            // 点击发送
+            await this.page.locator(sendBtnSelector).click();
+            console.log(`[BrowserInstance] Chat message fully sent via DOM.`);
+        } else {
+             console.warn(`[BrowserInstance] Input box ${inputSelector} not found on page. Simulation skipped.`);
+        }
     } catch (e) {
         console.error('[BrowserInstance] Failed to send chat to DOM:', e);
     }

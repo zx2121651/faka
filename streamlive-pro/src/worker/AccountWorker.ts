@@ -19,7 +19,9 @@ class AccountWorker {
 
     console.log(`[Worker ${this.accountId}] Initializing... Type: ${this.streamType}`);
 
-    this.browserInstance = new BrowserInstance();
+    // 把 streamConfig 中带过来的 AI 配置透传给 BrowserInstance
+    const aiSettings = this.streamConfig?.aiSettings;
+    this.browserInstance = new BrowserInstance(false, aiSettings);
     this.streamingService = new StreamingService();
     this.liveController = new LiveController();
     this.trafficController = new TrafficController();

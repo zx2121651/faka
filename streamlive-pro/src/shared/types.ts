@@ -8,10 +8,18 @@ export interface IAccountInfo {
   streamType: string;
 }
 
+export interface IAISettings {
+  enabled: boolean;
+  provider: 'openai' | 'deepseek';
+  apiKey: string;
+  systemPrompt: string;
+}
+
 export interface IStreamConfig {
   server: string;
   key: string;
   filePath?: string;
+  aiSettings?: IAISettings;
 }
 
 export interface IPCMessage {
