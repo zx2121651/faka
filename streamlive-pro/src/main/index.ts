@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path from 'path';
 import { AccountCoordinator } from './AccountCoordinator';
 import { ResourceManager } from './ResourceManager';
@@ -54,9 +54,9 @@ ipcMain.handle('get-accounts', () => {
   return coordinator.getAccountList();
 });
 
-ipcMain.handle('start-account', async (event, accountId: string, streamType: string) => {
+ipcMain.handle('start-account', async (event, accountId: string, streamType: string, streamConfig: any) => {
   try {
-    await coordinator.startAccount(accountId, streamType);
+    await coordinator.startAccount(accountId, streamType, streamConfig);
     return { success: true };
   } catch (error: any) {
     return { success: false, error: error.message };
@@ -79,6 +79,21 @@ ipcMain.handle('remove-account', async (event, accountId: string) => {
   } catch (error: any) {
     return { success: false, error: error.message };
   }
+});
+
+ipcMain.handle('select-file', async () => {
+  if (!mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '选择本地推流视频',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Videos', extensions: ['mp4', 'flv', 'mkv', 'avi', 'mov'] }
+    ]
+  });
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+  return result.filePaths[0];
 });
 
 // Route updates from coordinator to the renderer

@@ -11,6 +11,7 @@ export interface IAccountInfo {
 export interface IStreamConfig {
   server: string;
   key: string;
+  filePath?: string;
 }
 
 export interface IPCMessage {

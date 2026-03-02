@@ -27,7 +27,7 @@ export class AccountCoordinator extends EventEmitter {
     return accountInfo;
   }
 
-  async startAccount(accountId: string, streamType: string = 'rtmp'): Promise<void> {
+  async startAccount(accountId: string, streamType: string = 'rtmp', streamConfig: any = null): Promise<void> {
     const account = this.accounts.get(accountId);
     if (!account) throw new Error(`Account ${accountId} not found.`);
     if (this.workers.has(accountId)) throw new Error(`Account ${accountId} is already running.`);
@@ -41,7 +41,12 @@ export class AccountCoordinator extends EventEmitter {
     const workerPath = path.join(__dirname, '../worker/AccountWorker.js');
     console.log(`Starting worker for ${accountId} at ${workerPath}`);
 
-    const worker = fork(workerPath, [accountId, streamType], {
+    const workerArgs = [accountId, streamType];
+    if (streamConfig) {
+        workerArgs.push(JSON.stringify(streamConfig));
+    }
+
+    const worker = fork(workerPath, workerArgs, {
       env: { ...process.env, ACCOUNT_ID: accountId },
       stdio: 'inherit',
     });

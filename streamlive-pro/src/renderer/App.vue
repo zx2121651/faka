@@ -63,12 +63,12 @@
             <span v-if="currentAccount.status === 'streaming'" style="color: white; background-color: #ef233c; padding: 5px 10px; border-radius: 15px; font-size: 12px;">推流中</span>
           </div>
           <div class="input-group">
-            <label>推流服务器</label>
-            <input type="text" placeholder="rtmp://live-push.example.com/live/" readonly>
+            <label>推流服务器 (RTMP地址)</label>
+            <input type="text" v-model="rtmpServer" placeholder="例如: rtmp://live-push.example.com/live/">
           </div>
           <div class="input-group">
             <label>串流密钥</label>
-            <input type="password" value="................" readonly>
+            <input type="password" v-model="streamKey" placeholder="输入密钥">
           </div>
         </div>
 
@@ -127,21 +127,26 @@
 
           <div v-if="timerEnabled" style="display: flex; gap: 10px; margin-bottom: 20px; align-items: center;">
             <span style="font-size: 14px;">定时时长:</span>
-            <input type="number" style="width: 50px; padding: 5px; border: 1px solid var(--border); border-radius: 4px;" value="0"> 时
-            <input type="number" style="width: 50px; padding: 5px; border: 1px solid var(--border); border-radius: 4px;" value="30"> 分
+            <input type="number" v-model.number="timerHours" min="0" style="width: 50px; padding: 5px; border: 1px solid var(--border); border-radius: 4px;"> 时
+            <input type="number" v-model.number="timerMinutes" min="0" max="59" style="width: 50px; padding: 5px; border: 1px solid var(--border); border-radius: 4px;"> 分
+          </div>
+          <div v-if="timerEnabled && currentAccount?.status === 'streaming'" style="margin-bottom: 20px; color: var(--danger); font-size: 14px; text-align: center;">
+             距离关播: {{ formatRemainingTime(remainingSeconds) }}
           </div>
 
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <span>资源管理 <span style="font-size: 12px; color: var(--text-muted)">已上传 0 张图片</span></span>
-            <label class="toggle-switch">
-              <input type="checkbox" checked>
-              <span class="slider"></span>
-            </label>
+            <span>推流视频资源</span>
           </div>
 
-          <div style="border: 2px dashed #a0c4ff; border-radius: 8px; padding: 30px; text-align: center; color: var(--primary); cursor: pointer; background: #f8faff;">
-            选择图片<br>
-            <span style="font-size: 12px; color: var(--text-muted);">JPG/PNG/GIF</span>
+          <div
+            @click="selectMediaFile"
+            style="border: 2px dashed #a0c4ff; border-radius: 8px; padding: 30px; text-align: center; color: var(--primary); cursor: pointer; background: #f8faff; word-break: break-all;"
+          >
+            <span v-if="selectedFilePath">{{ selectedFilePath }}</span>
+            <span v-else>
+              点击选择本地视频<br>
+              <span style="font-size: 12px; color: var(--text-muted);">MP4 / FLV / MKV</span>
+            </span>
           </div>
 
         </div>
@@ -154,7 +159,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, watch } from 'vue';
 
 const { ipcRenderer } = window.require('electron');
 
@@ -170,6 +175,17 @@ const accounts = ref<IAccountInfo[]>([]);
 const currentAccount = ref<IAccountInfo | null>(null);
 const selectedStreamType = ref('rtmp');
 const timerEnabled = ref(true);
+
+// 资源与推流配置
+const selectedFilePath = ref('');
+const rtmpServer = ref('rtmp://localhost/live/'); // 默认测试地址
+const streamKey = ref('test'); // 默认测试密钥
+
+// 定时关播
+const timerHours = ref(0);
+const timerMinutes = ref(30);
+let timerInterval: any = null;
+const remainingSeconds = ref(0);
 
 const fetchAccounts = async () => {
   accounts.value = await ipcRenderer.invoke('get-accounts');
@@ -187,13 +203,40 @@ const selectAccount = (acc: IAccountInfo) => {
   selectedStreamType.value = acc.streamType || 'rtmp';
 };
 
+const selectMediaFile = async () => {
+  const filePath = await ipcRenderer.invoke('select-file');
+  if (filePath) {
+    selectedFilePath.value = filePath;
+  }
+};
+
 const startStream = async () => {
   if (!currentAccount.value) return;
-  const res = await ipcRenderer.invoke('start-account', currentAccount.value.id, selectedStreamType.value);
+
+  if (selectedStreamType.value === 'ffmpeg' && !selectedFilePath.value) {
+      alert('使用 FFmpeg 推流前，请先在右侧选择要推流的本地视频文件！');
+      return;
+  }
+  if (!rtmpServer.value || !streamKey.value) {
+      alert('请填写推流服务器地址和密钥！');
+      return;
+  }
+
+  const streamConfig = {
+      server: rtmpServer.value,
+      key: streamKey.value,
+      filePath: selectedFilePath.value
+  };
+
+  const res = await ipcRenderer.invoke('start-account', currentAccount.value.id, selectedStreamType.value, streamConfig);
   if (res.success) {
-      // Optimistic update
       currentAccount.value.status = 'starting';
       currentAccount.value.streamType = selectedStreamType.value;
+
+      // 启动定时器
+      if (timerEnabled.value && (timerHours.value > 0 || timerMinutes.value > 0)) {
+          startTimer();
+      }
   } else {
       alert(`启动失败: ${res.error}`);
   }
@@ -202,10 +245,37 @@ const startStream = async () => {
 const stopStream = async () => {
   if (!currentAccount.value) return;
   const res = await ipcRenderer.invoke('stop-account', currentAccount.value.id);
-  if (!res.success) {
+  if (res.success) {
+      clearTimer();
+  } else {
       alert(`停止失败: ${res.error}`);
   }
 };
+
+const startTimer = () => {
+    clearTimer();
+    remainingSeconds.value = timerHours.value * 3600 + timerMinutes.value * 60;
+    timerInterval = setInterval(() => {
+        if (remainingSeconds.value <= 0) {
+            clearTimer();
+            stopStream(); // 定时到期，自动停止推流
+            alert(`【${currentAccount.value?.name}】定时关播已触发。`);
+        } else {
+            remainingSeconds.value--;
+        }
+    }, 1000);
+};
+
+const clearTimer = () => {
+    if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+    }
+};
+
+watch(currentAccount, (newAcc, oldAcc) => {
+    // 切换账号边界处理
+});
 
 onMounted(() => {
   fetchAccounts();
@@ -225,6 +295,7 @@ onMounted(() => {
 
 onUnmounted(() => {
     ipcRenderer.removeAllListeners('account-status-changed');
+    clearTimer();
 });
 
 // Utils
@@ -253,4 +324,11 @@ const formatDuration = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     return `${m}分钟`;
 }
+
+const formatRemainingTime = (totalSeconds: number) => {
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+};
 </script>

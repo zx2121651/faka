@@ -6,6 +6,7 @@ import { TrafficController } from './TrafficController';
 class AccountWorker {
   private accountId: string;
   private streamType: string;
+  private streamConfig: any;
   private browserInstance: BrowserInstance;
   private streamingService: StreamingService;
   private liveController: LiveController;
@@ -13,7 +14,8 @@ class AccountWorker {
 
   constructor() {
     this.accountId = process.env.ACCOUNT_ID || 'unknown';
-    this.streamType = process.argv[3] || 'rtmp'; // Args: [node, script, accountId, streamType]
+    this.streamType = process.argv[2] || 'rtmp'; // Args: [node, script, accountId, streamType, streamConfig]
+    this.streamConfig = process.argv[3] ? JSON.parse(process.argv[3]) : null;
 
     console.log(`[Worker ${this.accountId}] Initializing... Type: ${this.streamType}`);
 
@@ -50,7 +52,7 @@ class AccountWorker {
       this.trafficController.applyTrafficControl();
 
       // 5. 启动推流服务
-      await this.streamingService.start(streamCode, this.streamType);
+      await this.streamingService.start(this.streamConfig || streamCode, this.streamType);
 
       // 6. 启动直播场控 (弹幕/点赞监控)
       this.liveController.start();
