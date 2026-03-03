@@ -68,6 +68,11 @@ ipcMain.handle('get-accounts', () => {
   return coordinator.getAccountList();
 });
 
+ipcMain.handle('add-account', (event, name: string) => {
+  const id = `acc_${Date.now()}`;
+  return coordinator.createAccount(id, name);
+});
+
 ipcMain.handle('start-account', async (event, accountId: string, streamType: string, streamConfig: any) => {
   try {
     await coordinator.startAccount(accountId, streamType, streamConfig);
@@ -120,5 +125,11 @@ coordinator.on('account-status-changed', (accountId, status) => {
 coordinator.on('ai-log', (accountId, log) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('ai-log', { accountId, log });
+    }
+});
+
+coordinator.on('qr-code', (accountId, data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('qr-code', { accountId, data });
     }
 });

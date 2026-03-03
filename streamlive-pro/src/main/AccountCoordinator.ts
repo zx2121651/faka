@@ -1,18 +1,50 @@
 import { ChildProcess, fork } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
+import { app } from 'electron';
 import { EventEmitter } from 'events';
-import { AccountStatus, IAccountInfo } from '../shared/types';
+import { AccountStatus, IAccountInfo, IStreamConfig } from '../shared/types';
 
 export class AccountCoordinator extends EventEmitter {
   private accounts: Map<string, IAccountInfo> = new Map();
   private workers: Map<string, ChildProcess> = new Map();
+  private configPath: string;
 
   constructor() {
     super();
-    // Initialize with some dummy data for the UI
-    this.createAccount('account_8', '新用户直播间158');
-    this.createAccount('account_9', '新用户直播间159');
-    this.createAccount('account_0', '新用户直播间160');
+    this.configPath = path.join(app.getPath('userData'), 'accounts.json');
+    this.loadAccounts();
+  }
+
+  private loadAccounts() {
+    try {
+      if (fs.existsSync(this.configPath)) {
+        const data = fs.readFileSync(this.configPath, 'utf8');
+        const parsedAccounts: IAccountInfo[] = JSON.parse(data);
+        parsedAccounts.forEach(acc => {
+          // Reset status to offline on load
+          acc.status = 'offline';
+          this.accounts.set(acc.id, acc);
+        });
+        console.log(`[AccountCoordinator] Loaded ${parsedAccounts.length} accounts from ${this.configPath}`);
+      }
+    } catch (e) {
+      console.error('[AccountCoordinator] Failed to load accounts.json', e);
+    }
+
+    // Default mock data if empty
+    if (this.accounts.size === 0) {
+      this.createAccount(`acc_${Date.now()}`, '默认测试直播间');
+    }
+  }
+
+  private saveAccounts() {
+    try {
+      const accountsArray = Array.from(this.accounts.values());
+      fs.writeFileSync(this.configPath, JSON.stringify(accountsArray, null, 2), 'utf8');
+    } catch (e) {
+      console.error('[AccountCoordinator] Failed to save accounts.json', e);
+    }
   }
 
   createAccount(id: string, name: string) {
@@ -22,15 +54,42 @@ export class AccountCoordinator extends EventEmitter {
       status: 'offline',
       duration: 0,
       streamType: 'rtmp',
+      streamConfig: {
+          server: 'rtmp://localhost/live/',
+          key: 'test',
+          aiSettings: {
+              enabled: false,
+              provider: 'deepseek',
+              apiKey: '',
+              systemPrompt: '你是一个活泼的带货主播助手。'
+          }
+      }
     };
     this.accounts.set(id, accountInfo);
+    this.saveAccounts();
     return accountInfo;
+  }
+
+  updateAccountConfig(accountId: string, streamType: string, streamConfig: IStreamConfig) {
+      const account = this.accounts.get(accountId);
+      if (account) {
+          account.streamType = streamType;
+          account.streamConfig = streamConfig;
+          this.saveAccounts();
+      }
   }
 
   async startAccount(accountId: string, streamType: string = 'rtmp', streamConfig: any = null): Promise<void> {
     const account = this.accounts.get(accountId);
     if (!account) throw new Error(`Account ${accountId} not found.`);
     if (this.workers.has(accountId)) throw new Error(`Account ${accountId} is already running.`);
+
+    // 启动时自动保存用户的最新配置
+    if (streamConfig) {
+        this.updateAccountConfig(accountId, streamType, streamConfig);
+    } else {
+        streamConfig = account.streamConfig;
+    }
 
     // Update state to starting
     account.status = 'starting';
@@ -87,6 +146,7 @@ export class AccountCoordinator extends EventEmitter {
     await this.stopAccount(accountId);
     this.accounts.delete(accountId);
     this.workers.delete(accountId);
+    this.saveAccounts();
   }
 
   getAccountList(): IAccountInfo[] {
@@ -104,6 +164,8 @@ export class AccountCoordinator extends EventEmitter {
     if (message.type === 'STATUS_UPDATE') {
       if (message.payload.status === 'ai-log') {
         this.emit('ai-log', accountId, message.payload.log);
+      } else if (message.payload.status === 'qr-code') {
+        this.emit('qr-code', accountId, message.payload.data);
       } else {
         const account = this.accounts.get(accountId);
         if (account) {

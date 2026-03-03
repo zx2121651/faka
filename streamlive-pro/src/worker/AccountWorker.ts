@@ -21,7 +21,7 @@ class AccountWorker {
 
     // 把 streamConfig 中带过来的 AI 配置透传给 BrowserInstance
     const aiSettings = this.streamConfig?.aiSettings;
-    this.browserInstance = new BrowserInstance(false, aiSettings);
+    this.browserInstance = new BrowserInstance(this.accountId, false, aiSettings);
     this.streamingService = new StreamingService();
     this.liveController = new LiveController();
     this.trafficController = new TrafficController();
@@ -64,6 +64,11 @@ class AccountWorker {
     // 监听 AI 日志
     this.browserInstance.on('ai-log', (log: any) => {
         this.sendStateUpdate('ai-log', { log });
+    });
+
+    // 监听二维码扫码事件
+    this.browserInstance.on('qr-code', (base64Data: string) => {
+        this.sendStateUpdate('qr-code', { data: base64Data });
     });
 
       // 6. 启动直播场控 (弹幕/点赞监控)

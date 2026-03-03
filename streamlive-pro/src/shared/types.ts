@@ -6,6 +6,7 @@ export interface IAccountInfo {
   status: AccountStatus;
   duration: number; // in seconds
   streamType: string;
+  streamConfig?: IStreamConfig; // 持久化推流与AI配置
 }
 
 export interface IAISettings {

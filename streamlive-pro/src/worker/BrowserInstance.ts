@@ -1,5 +1,7 @@
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import { EventEmitter } from 'events';
+import * as fs from 'fs';
+import * as path from 'path';
 import { AIEngine } from './AIEngine';
 import { IAISettings } from '../shared/types';
 
@@ -10,16 +12,24 @@ export class BrowserInstance extends EventEmitter {
   private isHeadless: boolean = false;
   private aiEngine: AIEngine;
   private chatSimulationInterval: NodeJS.Timeout | null = null;
+  private accountId: string;
 
   // 网络嗅探状态
   private interceptedStreamConfig: { server: string, key: string } | null = null;
   private sniffResolve: ((value: any) => void) | null = null;
 
-  constructor(headless: boolean = false, aiSettings?: IAISettings) {
+  constructor(accountId: string, headless: boolean = false, aiSettings?: IAISettings) {
     super();
+    this.accountId = accountId;
     this.isHeadless = headless;
     this.aiEngine = new AIEngine(aiSettings);
     this.setupAIEngine();
+  }
+
+  private getCookieFilePath(): string {
+      // 在生产环境中应存储到 app.getPath('userData') 中
+      // 为了 Worker 独立运行，这里简化为本地目录下
+      return path.join(process.cwd(), `cookies_${this.accountId}.json`);
   }
 
   private setupAIEngine() {
@@ -47,8 +57,7 @@ export class BrowserInstance extends EventEmitter {
         ]
     });
 
-    // 配置类似真人的 Context，并注入自定义 User-Agent
-    this.context = await this.browser.newContext({
+    const contextOptions: any = {
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         viewport: { width: 1920, height: 1080 },
         deviceScaleFactor: 1,
@@ -56,7 +65,21 @@ export class BrowserInstance extends EventEmitter {
         isMobile: false,
         locale: 'zh-CN',
         timezoneId: 'Asia/Shanghai'
-    });
+    };
+
+    const cookiePath = this.getCookieFilePath();
+    if (fs.existsSync(cookiePath)) {
+        try {
+            const cookies = JSON.parse(fs.readFileSync(cookiePath, 'utf8'));
+            contextOptions.storageState = { cookies, origins: [] };
+            console.log(`[BrowserInstance] Loaded existing cookies for ${this.accountId}`);
+        } catch (e) {
+            console.error('[BrowserInstance] Failed to parse cookie file', e);
+        }
+    }
+
+    // 配置类似真人的 Context，并注入自定义 User-Agent
+    this.context = await this.browser.newContext(contextOptions);
 
     // 深度注入反风控脚本 (Stealth) 到每一个新建的 Page
     await this.context.addInitScript(() => {
@@ -176,7 +199,7 @@ export class BrowserInstance extends EventEmitter {
   }
 
   async loginDouyin(): Promise<boolean> {
-    console.log(`[Browser] Simulating Douyin login...`);
+    console.log(`[Browser] Navigating to Douyin Creator Center...`);
     if (!this.page) return false;
 
     // 绑定 Node.js 回调，供网页内部 MutationObserver 触发
@@ -185,9 +208,53 @@ export class BrowserInstance extends EventEmitter {
         this.aiEngine.processChat(username, text);
     });
 
-    // 模拟访问和登录流程 (实际需替换为真实逻辑，可能使用保存的 Cookie)
-    await this.page.goto('https://creator.douyin.com/');
-    await this.page.waitForTimeout(2000); // 假装等待加载
+    await this.page.goto('https://creator.douyin.com/', { waitUntil: 'networkidle' });
+
+    // 判断是否需要登录 (查找登录按钮或检查特定的重定向)
+    // 这里的 Selector 视抖音具体情况而定，这里模拟查找右上角的头像或未登录状态
+    const isLoggedIn = await this.checkLoginStatus();
+
+    if (!isLoggedIn) {
+        console.log(`[Browser] Not logged in. Seeking QR Code...`);
+        // 尝试定位二维码 DOM
+        // 实际开发中需要具体的 Selector: e.g. '.qrcode-image'
+        try {
+            // 我们等待页面完全渲染，然后强制截图整个页面中心或寻找特定的 canvas/img
+            await this.page.waitForTimeout(3000);
+
+            // 模拟：假设二维码在一个叫 .login-qr-code 的元素里。如果找不到，退而求其次截取页面中心。
+            // 为了保证流程走通，我们先在本地 mock 截取整个页面的缩略图当做二维码
+            const buffer = await this.page.screenshot({ type: 'png' });
+            const base64 = buffer.toString('base64');
+
+            // 抛出事件通知 UI 展示二维码
+            this.emit('qr-code', base64);
+
+            // 循环轮询等待用户扫码并登录成功
+            let maxRetries = 60; // wait up to 2 minutes (60 * 2000ms)
+            while (maxRetries > 0) {
+                console.log(`[Browser] Waiting for user to scan QR code... (${maxRetries} tries left)`);
+                await this.page.waitForTimeout(2000);
+                if (await this.checkLoginStatus()) {
+                    console.log(`[Browser] QR Code scan successful!`);
+                    break;
+                }
+                maxRetries--;
+            }
+
+            if (maxRetries === 0) {
+                throw new Error("QR Code login timed out.");
+            }
+        } catch (e) {
+            console.error("[Browser] Failed to handle QR login", e);
+            return false;
+        }
+    } else {
+        console.log(`[Browser] Already logged in via cookies!`);
+    }
+
+    // 登录成功后保存 Cookie
+    await this.saveDouyinCookies();
 
     // 注入真实 DOM 监听器
     await this.injectDouyinDomWatcher();
@@ -267,8 +334,15 @@ export class BrowserInstance extends EventEmitter {
   }
 
   async checkLoginStatus(): Promise<boolean> {
+    if (!this.page) return false;
     console.log(`[Browser] Checking login status...`);
-    // 模拟检查
+    // 真实场景：检查是否存在特定于登录后的元素，例如用户头像 `.user-avatar`
+    // 这里简单通过 URL 判断是否被重定向到登录页
+    const url = this.page.url();
+    if (url.includes('passport.douyin.com') || url.includes('login')) {
+        return false;
+    }
+    // 假设如果不包含 login，就算是在创作者中心内部了
     return true;
   }
 
@@ -305,10 +379,10 @@ export class BrowserInstance extends EventEmitter {
   }
 
   async saveDouyinCookies(): Promise<void> {
-    console.log(`[Browser] Saving Douyin cookies...`);
+    console.log(`[Browser] Saving Douyin cookies to disk...`);
     if(this.context) {
         const cookies = await this.context.cookies();
-        // 保存逻辑 (e.g. electron-store 或文件)
+        fs.writeFileSync(this.getCookieFilePath(), JSON.stringify(cookies, null, 2), 'utf8');
     }
   }
 

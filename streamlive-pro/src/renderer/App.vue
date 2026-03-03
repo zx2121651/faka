@@ -39,7 +39,7 @@
       <div class="sidebar">
       <div class="sidebar-header">
         <h3>账号列表</h3>
-        <button class="btn btn-primary" style="padding: 5px 10px;">+</button>
+        <button class="btn btn-primary" style="padding: 5px 10px;" @click="addAccount">+</button>
       </div>
       <div class="account-list">
         <div
@@ -253,6 +253,18 @@
          <h2 style="color: var(--text-muted)">请在左侧选择一个账号</h2>
       </div>
     </div>
+
+    <!-- QR Code Overlay -->
+    <div v-if="qrCodeDialog.visible" class="qr-overlay">
+      <div class="qr-modal">
+          <h3>手机扫码登录</h3>
+          <p>请使用 <b>{{qrCodeDialog.accName}}</b> 关联的手机APP扫描二维码：</p>
+          <img :src="`data:image/png;base64,${qrCodeDialog.base64}`" alt="Login QR Code" style="width: 200px; height: 200px; border: 1px solid #eee; padding: 10px; border-radius: 8px; margin: 15px 0; background: white;" />
+          <p style="font-size: 12px; color: var(--text-muted)">正在等待扫码确认，成功后此窗口将自动关闭...</p>
+          <button class="btn btn-outline" style="margin-top: 10px;" @click="qrCodeDialog.visible = false">取消登录</button>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -267,6 +279,7 @@ interface IAccountInfo {
   status: 'offline' | 'starting' | 'streaming' | 'reconnecting' | 'error';
   duration: number;
   streamType: string;
+  streamConfig?: any;
 }
 
 const accounts = ref<IAccountInfo[]>([]);
@@ -325,11 +338,35 @@ const selectAccount = (acc: IAccountInfo) => {
   currentAccount.value = acc;
   selectedStreamType.value = acc.streamType || 'rtmp';
 
+  if (acc.streamConfig) {
+      rtmpServer.value = acc.streamConfig.server || 'rtmp://localhost/live/';
+      streamKey.value = acc.streamConfig.key || 'test';
+      selectedFilePath.value = acc.streamConfig.filePath || '';
+      if (acc.streamConfig.aiSettings) {
+          aiSettings.value = { ...aiSettings.value, ...acc.streamConfig.aiSettings };
+      }
+  } else {
+      // Default reset
+      rtmpServer.value = 'rtmp://localhost/live/';
+      streamKey.value = 'test';
+      selectedFilePath.value = '';
+      aiSettings.value.enabled = false;
+  }
+
   // 初始化该账号的日志数组
   if (!accountAiLogs.value[acc.id]) {
       accountAiLogs.value[acc.id] = [];
   }
 };
+
+const addAccount = async () => {
+    const name = window.prompt("请输入新账号的名称：", "新主播账号");
+    if (name) {
+        const newAcc = await ipcRenderer.invoke('add-account', name);
+        accounts.value.push(newAcc);
+        selectAccount(newAcc);
+    }
+}
 
 const selectMediaFile = async () => {
   const filePath = await ipcRenderer.invoke('select-file');
@@ -423,6 +460,13 @@ onMounted(() => {
           if (currentAccount.value && currentAccount.value.id === accountId) {
              currentAccount.value.status = status;
           }
+
+          // 如果变为推流状态，自动关闭二维码弹窗
+          if (status === 'streaming' || status === 'error' || status === 'offline') {
+              if (qrCodeDialog.value.visible && accounts.value.find(a => a.name === qrCodeDialog.value.accName)?.id === accountId) {
+                  qrCodeDialog.value.visible = false;
+              }
+          }
       }
   });
 
@@ -448,11 +492,34 @@ onMounted(() => {
       }
   });
 
+  // Listen for QR Codes from the worker
+  ipcRenderer.on('qr-code', (event: any, { accountId, data }: any) => {
+      // 这里可以将其保存到状态并弹出一个 Dialog 组件让用户扫码
+      // 为简化演示，我们先使用原生的 window.alert/prompt 或 console
+      console.log(`[UI] Received QR Code for ${accountId}. Base64 Length: ${data.length}`);
+
+      // 我们创建一个简易的悬浮层展示二维码
+      showQrCodeDialog(accountId, data);
+  });
+
   // Listen for real-time system stats update
   ipcRenderer.on('system-stats-update', (event: any, stats: any) => {
       systemStats.value = stats;
   });
 });
+
+const qrCodeDialog = ref<{visible: boolean, base64: string, accName: string}>({ visible: false, base64: '', accName: '' });
+
+const showQrCodeDialog = (accountId: string, base64: string) => {
+    const acc = accounts.value.find(a => a.id === accountId);
+    if (acc) {
+        qrCodeDialog.value = {
+            visible: true,
+            base64,
+            accName: acc.name
+        };
+    }
+};
 
 onUnmounted(() => {
     ipcRenderer.removeAllListeners('account-status-changed');
@@ -511,6 +578,22 @@ const formatTime = (ts: number) => {
 </script>
 
 <style scoped>
+.qr-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+.qr-modal {
+    background: white;
+    padding: 30px 40px;
+    border-radius: 12px;
+    text-align: center;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+}
 .chat-log-container {
     height: 200px;
     overflow-y: auto;
