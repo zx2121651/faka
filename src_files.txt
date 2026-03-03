@@ -1,0 +1,13 @@
+streamlive-pro/src/main/AccountCoordinator.ts
+streamlive-pro/src/main/ResourceManager.ts
+streamlive-pro/src/main/SystemMonitor.ts
+streamlive-pro/src/main/index.ts
+streamlive-pro/src/renderer/App.vue
+streamlive-pro/src/renderer/main.ts
+streamlive-pro/src/shared/types.ts
+streamlive-pro/src/worker/AIEngine.ts
+streamlive-pro/src/worker/AccountWorker.ts
+streamlive-pro/src/worker/BrowserInstance.ts
+streamlive-pro/src/worker/LiveController.ts
+streamlive-pro/src/worker/StreamingService.ts
+streamlive-pro/src/worker/TrafficController.ts
