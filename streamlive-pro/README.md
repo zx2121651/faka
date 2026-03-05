@@ -93,6 +93,10 @@ xvfb-run --auto-servernum npx playwright test
 - 已安装 Docker 和 Docker Compose
 - 主机拥有至少 2GB 可用内存
 
+**💡 Windows 11 用户特别说明：**
+由于项目采用了 Docker Desktop (通常基于 WSL2)，当您的源码存放在 Windows 文件系统（如 `C盘`、`D盘`）并且挂载到 Linux 容器时，可能因为换行符 `\r\n` 与 `\n` 的不同导致容器启动失败。
+我们已经在镜像构建时加入了 `dos2unix` 来自动修复此问题，您无需对 Git 配置做额外调整即可顺利启动。如果仍然遇到问题，请确保在克隆代码时 Git 将换行符转换为 LF。
+
 ### 启动步骤
 
 1. **进入项目根目录**，执行一键拉起命令：

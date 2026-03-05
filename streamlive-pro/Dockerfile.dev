@@ -13,7 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     websockify \
     fluxbox \
     ffmpeg \
-    supervisor \
+    fonts-wqy-zenhei \
+    fonts-noto-cjk \
     x11-xserver-utils \
     net-tools \
     python3 \
@@ -21,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-websockify \
     git \
     nano \
+    dos2unix \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -28,7 +30,8 @@ WORKDIR /app
 # The entrypoint script will be mapped from the host to ensure it's easy to modify
 # However, we'll ensure we have a fallback if not provided via compose
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Fix potential Windows CRLF line endings which cause "bad interpreter" errors in Linux containers
+RUN dos2unix /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Expose noVNC port (8080 by default) and Vite port (5173 for HMR if needed)
 EXPOSE 8080 5173
