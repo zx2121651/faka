@@ -82,6 +82,38 @@ xvfb-run --auto-servernum npx playwright test
 
 ---
 
+## 🐳 Docker 本地开发与网页访问指南
+
+针对无显示器的服务器（Headless Server）或希望隔离开发环境的用户，我们提供了基于 Docker、VNC 和 noVNC 的浏览器可视化方案。
+
+您可以在 Docker 容器中运行本程序，直接在浏览器中查看 Electron 界面并进行操作（例如：扫码登录）。
+
+### 部署要求
+
+- 已安装 Docker 和 Docker Compose
+- 主机拥有至少 2GB 可用内存
+
+### 启动步骤
+
+1. **进入项目根目录**，执行一键拉起命令：
+   ```sh
+   docker-compose up -d --build
+   ```
+2. **首次启动初始化**：首次启动时，容器会在后台执行 `npm install` 安装依赖和下载 Playwright 浏览器，这可能会消耗几分钟的时间，请耐心等待。您可以使用以下命令查看进度日志：
+   ```sh
+   docker-compose logs -f
+   ```
+3. **访问网页端界面**：当日志提示 `noVNC is running at: http://localhost:8080/vnc.html` 且 Electron 启动后，打开您的浏览器，访问：
+   👉 **http://localhost:8080/vnc.html**
+   即可看到完整的 Electron 桌面环境！
+
+### 💡 Docker 模式下的开发特性
+
+- **热更新 (HMR)**: 宿主机的项目源码已挂载至容器中。您在宿主机上修改 Vue 或主进程文件后，容器内会自动触发热更新或重启，无需重新构建镜像。
+- **依赖隔离**: 容器内部拥有独立的 `node_modules` Volume，完美避开了在 Windows/macOS 和 Linux 之间因原生 C++ 插件 (如 SQLite, Playwright 等) 造成的平台编译冲突。
+
+---
+
 ## 📄 架构图映射参考
 
 虽然仓库中未直接附带图形化的架构图文件，但以上文本架构就是标准架构图的完美映射。您可以将 **主进程** 视作中枢总线，**Renderer 进程** 视作左侧用户态面板，**Worker 进程（BrowserInstance, AIEngine, FFmpeg）** 视作右侧的账号流转中心与执行节点。
