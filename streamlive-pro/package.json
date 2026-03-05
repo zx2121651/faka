@@ -7,6 +7,8 @@
     "dev:vite": "vite",
     "dev:main": "wait-on http://localhost:5173 && tsc -p tsconfig.main.json && tsc -p tsconfig.worker.json && electron .",
     "dev": "concurrently -k \"npm run dev:vite\" \"npm run dev:main\"",
+    "dev:docker": "concurrently -k \"npm run dev:vite\" \"npm run dev:main:docker\"",
+    "dev:main:docker": "wait-on http://localhost:5173 && tsc -p tsconfig.main.json && tsc -p tsconfig.worker.json && electron . --no-sandbox --disable-gpu",
     "build:main": "tsc -p tsconfig.main.json",
     "build:worker": "tsc -p tsconfig.worker.json",
     "build:vite": "vite build",
